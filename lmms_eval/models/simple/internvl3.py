@@ -234,7 +234,10 @@ class InternVL3(lmms):
         device_map: Device mapping strategy. Use "auto" for multi-GPU.
         batch_size: Batch size (must be 1 for this model).
         num_frame: Number of frames to sample for video inputs.
-        max_num: Maximum number of image tiles.
+        max_num: Maximum number of image tiles per image.
+        total_max_num: Total maximum number of tiles across all images. When set,
+            dynamically adjusts max_num per image: max(1, min(max_num, total_max_num // num_images)).
+            If None, uses static max_num for all images.
         use_flash_attn: Whether to use flash attention.
     """
 
@@ -247,6 +250,7 @@ class InternVL3(lmms):
         batch_size: str = "1",
         num_frame: int = 32,
         max_num: int = 12,
+        total_max_num: Optional[int] = None,
         use_flash_attn: bool = True,
         **kwargs,
     ):
@@ -255,6 +259,7 @@ class InternVL3(lmms):
         self.path = pretrained
         self.num_frame = num_frame
         self.max_num = max_num
+        self.total_max_num = total_max_num
 
         batch_size_int = int(batch_size)
         assert batch_size_int == 1, f"Batch size should be 1 for InternVL3, but got {batch_size_int}."
@@ -399,7 +404,13 @@ class InternVL3(lmms):
             visuals = self.flatten(visuals)
             if self.modality == "image":
                 if visuals:
-                    processed_visuals = [load_image(visual, max_num=self.max_num).to(torch.bfloat16).to(self._device) for visual in visuals]
+                    # Calculate dynamic max_num based on number of images
+                    image_num = len(visuals)
+                    if self.total_max_num is not None:
+                        dynamic_max_num = max(1, min(self.max_num, self.total_max_num // image_num))
+                    else:
+                        dynamic_max_num = self.max_num
+                    processed_visuals = [load_image(visual, max_num=dynamic_max_num).to(torch.bfloat16).to(self._device) for visual in visuals]
                     pixel_values = torch.cat(processed_visuals, dim=0)
                     num_patches_list = [v.size(0) for v in processed_visuals]
                     image_tokens = " ".join(["<image>"] * len(processed_visuals))
